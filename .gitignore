@@ -1,0 +1,15 @@
+# Build output
+Debug/
+Release/
+*.o
+*.d
+*.su
+*.map
+*.list
+
+# CubeIDE workspace metadata
+.metadata/
+RemoteSystemsTempFiles/
+
+# SystemView recordings (optional - keep if you want them as evidence)
+*.SVdat
