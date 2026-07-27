@@ -67,7 +67,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+	SCB->VTOR = 0x08008000UL;   /* vector table lives at app base, not 0x08000000 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -90,7 +90,10 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  while(1){
+	  HAL_GPIO_TogglePin(GPIOA,LD2_Pin);
+      HAL_Delay(500);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
