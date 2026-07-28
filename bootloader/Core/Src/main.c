@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "flash.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -108,11 +108,38 @@ static void update_mode(void)
 
     while (1)
     {
-        /* wait forever for one byte, then send it straight back */
-        if (HAL_UART_Receive(&huart2, &byte, 1, HAL_MAX_DELAY) == HAL_OK)
-        {
-            HAL_UART_Transmit(&huart2, &byte, 1, 100);
-        }
+    	if (HAL_UART_Receive(&huart2, &byte, 1, HAL_MAX_DELAY) == HAL_OK)
+    	{
+    	    if (byte == 'T')
+    	    {
+    	        const char msg_run[]  = "\r\nself-test: erase S3, write, verify...\r\n";
+    	        HAL_UART_Transmit(&huart2, (uint8_t*)msg_run, sizeof(msg_run)-1, 100);
+
+    	        flash_status_t st;
+    	        flash_unlock();
+
+    	        st = flash_erase_sector(3);
+    	        if (st == FLASH_OK)
+    	        {
+    	            /* erased flash must read all-1s */
+    	            if (*(volatile uint32_t *)0x0800C000 != 0xFFFFFFFFUL)
+    	                st = FLASH_ERR_VERIFY;
+    	        }
+    	        if (st == FLASH_OK) st = flash_write_word(0x0800C000, 0xDEADBEEFUL);
+    	        if (st == FLASH_OK) st = flash_write_word(0x0800C004, 0xCAFEBABEUL);
+
+    	        flash_lock();
+
+    	        if (st == FLASH_OK)
+    	            HAL_UART_Transmit(&huart2, (uint8_t*)"PASS\r\n", 6, 100);
+    	        else
+    	            HAL_UART_Transmit(&huart2, (uint8_t*)"FAIL\r\n", 6, 100);
+    	    }
+    	    else
+    	    {
+    	        HAL_UART_Transmit(&huart2, &byte, 1, 100);   /* still a parrot otherwise */
+    	    }
+    	}
     }
 }
 /* USER CODE END 0 */
