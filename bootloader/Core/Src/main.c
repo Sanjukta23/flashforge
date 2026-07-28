@@ -98,6 +98,23 @@ static void jump_to_app(void)
     void (*app_entry)(void) = (void (*)(void))app_reset;
     app_entry();
 }
+
+static void update_mode(void)
+{
+    uint8_t byte;
+    const char banner[] = "FlashForge bootloader v0.1 - update mode\r\n";
+
+    HAL_UART_Transmit(&huart2, (uint8_t *)banner, sizeof(banner) - 1, 100);
+
+    while (1)
+    {
+        /* wait forever for one byte, then send it straight back */
+        if (HAL_UART_Receive(&huart2, &byte, 1, HAL_MAX_DELAY) == HAL_OK)
+        {
+            HAL_UART_Transmit(&huart2, &byte, 1, 100);
+        }
+    }
+}
 /* USER CODE END 0 */
 /* USER CODE END 0 */
 
@@ -133,6 +150,12 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   bootloader_signature();
+  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
+  {
+      /* button HELD (active-low: pressed = 0) -> stay resident */
+      update_mode();
+  }
+
   jump_to_app();
   /* USER CODE END 2 */
 
