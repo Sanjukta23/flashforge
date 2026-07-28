@@ -56,7 +56,49 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* USER CODE BEGIN 0 */
+#define APP_BASE_ADDR  0x08008000UL   /* where the app's vector table lives */
 
+static void bootloader_signature(void)
+{
+    /* 5 fast flashes on LD2 (PA5) so we can SEE the bootloader run */
+    for (int i = 0; i < 5; i++)
+    {
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+        HAL_Delay(100);
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+        HAL_Delay(100);
+    }
+}
+
+static void jump_to_app(void)
+{
+    /* 1. Read the app's two "notes" BEFORE we tear anything down.
+          (uint32_t *)APP_BASE_ADDR      = "treat this number as an address of a 32-bit word"
+          *(...)                          = "the value stored there"                    */
+    uint32_t app_msp   = *(uint32_t *)(APP_BASE_ADDR);        /* note 1: initial stack  */
+    uint32_t app_reset = *(uint32_t *)(APP_BASE_ADDR + 4U);   /* note 2: reset handler  */
+
+    /* 2. Ignore all alarms from here on */
+    __disable_irq();
+
+    /* 3. Switch the alarm clock off completely (HAL_Init started it) */
+    SysTick->CTRL = 0;
+    SysTick->LOAD = 0;
+    SysTick->VAL  = 0;
+
+    /* 4. Undo the bootloader's peripheral setup */
+    HAL_DeInit();
+
+    /* 5. Hand over the stack */
+    __set_MSP(app_msp);
+
+    /* 6. Go. Cast note 2 into "a function taking nothing, returning nothing" and call it.
+          This call never returns. */
+    void (*app_entry)(void) = (void (*)(void))app_reset;
+    app_entry();
+}
+/* USER CODE END 0 */
 /* USER CODE END 0 */
 
 /**
@@ -90,7 +132,8 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  bootloader_signature();
+  jump_to_app();
   /* USER CODE END 2 */
 
   /* Infinite loop */
