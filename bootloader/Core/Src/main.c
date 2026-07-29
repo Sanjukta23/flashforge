@@ -21,9 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include "flash.h"
 #include "crc.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -139,7 +139,6 @@ static void protocol_loop(void)
         }
     }
 }
-/* USER CODE BEGIN 0 */
 #define APP_BASE_ADDR  0x08008000UL   /* where the app's vector table lives */
 
 static void bootloader_signature(void)
@@ -184,10 +183,10 @@ static void jump_to_app(void)
 
 static void update_mode(void)
 {
-	uint8_t byte;
-
     const char banner[] = "FlashForge bootloader v0.1 - update mode\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)banner, sizeof(banner) - 1, 100);
+
+    crc_init();
 
     uint8_t  tv[4] = {0xDE, 0xAD, 0xBE, 0xEF};
     uint32_t c = crc_compute(tv, 4);
@@ -195,47 +194,12 @@ static void update_mode(void)
     int n = snprintf(msg, sizeof(msg), "CRC=%08lX\r\n", (unsigned long)c);
     HAL_UART_Transmit(&huart2, (uint8_t*)msg, n, 100);
 
-    crc_init();
     protocol_loop();
 
-    while (1)
-    {
-    	if (HAL_UART_Receive(&huart2, &byte, 1, HAL_MAX_DELAY) == HAL_OK)
-    	{
-    	    if (byte == 'T')
-    	    {
-    	        const char msg_run[]  = "\r\nself-test: erase S3, write, verify...\r\n";
-    	        HAL_UART_Transmit(&huart2, (uint8_t*)msg_run, sizeof(msg_run)-1, 100);
 
-    	        flash_status_t st;
-    	        flash_unlock();
-
-    	        st = flash_erase_sector(3);
-    	        if (st == FLASH_OK)
-    	        {
-    	            /* erased flash must read all-1s */
-    	            if (*(volatile uint32_t *)0x0800C000 != 0xFFFFFFFFUL)
-    	                st = FLASH_ERR_VERIFY;
-    	        }
-    	        if (st == FLASH_OK) st = flash_write_word(0x0800C000, 0xDEADBEEFUL);
-    	        if (st == FLASH_OK) st = flash_write_word(0x0800C004, 0xCAFEBABEUL);
-
-    	        flash_lock();
-
-    	        if (st == FLASH_OK)
-    	            HAL_UART_Transmit(&huart2, (uint8_t*)"PASS\r\n", 6, 100);
-    	        else
-    	            HAL_UART_Transmit(&huart2, (uint8_t*)"FAIL\r\n", 6, 100);
-    	    }
-    	    else
-    	    {
-    	        HAL_UART_Transmit(&huart2, &byte, 1, 100);   /* still a parrot otherwise */
-    	    }
-    	}
-    }
 }
 /* USER CODE END 0 */
-/* USER CODE END 0 */
+
 
 /**
   * @brief  The application entry point.
