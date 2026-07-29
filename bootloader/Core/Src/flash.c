@@ -8,8 +8,8 @@
 #include "flash.h"
 #include "stm32f4xx.h"          /* gives us FLASH-> register definitions */
 
-#define FLASH_KEY1  0x45670123UL    /* the two numbers you found in RM0390 */
-#define FLASH_KEY2  0xCDEF89ABUL
+#define BL_FLASH_KEY1  0x45670123UL    /* the two numbers you found in RM0390 */
+#define BL_FLASH_KEY2  0xCDEF89ABUL
 
 /* All the error flags in FLASH_SR, OR'd together.
    Writing 1 to these bits CLEARS them (write-1-to-clear — same trick
@@ -26,8 +26,8 @@ void flash_unlock(void)
 {
     if (FLASH->CR & FLASH_CR_LOCK)         /* only if actually locked */
     {
-        FLASH->KEYR = FLASH_KEY1;          /* order matters — */
-        FLASH->KEYR = FLASH_KEY2;          /* wrong order = silent re-lock */
+        FLASH->KEYR = BL_FLASH_KEY1;          /* order matters — */
+        FLASH->KEYR = BL_FLASH_KEY2;          /* wrong order = silent re-lock */
     }
 }
 

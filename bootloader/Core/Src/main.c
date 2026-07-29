@@ -21,7 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 #include "flash.h"
+#include "crc.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,6 +58,87 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define SOF        0xA5
+#define ACK        0x79
+#define NACK       0x1F
+
+#define CMD_PING   0x01
+#define CMD_ERASE  0x02
+#define CMD_WRITE  0x03
+#define CMD_GO     0x05
+
+#define BYTE_TIMEOUT_MS  100
+
+typedef enum { ST_WAIT_SOF, ST_LEN, ST_CMD, ST_PAYLOAD, ST_CRC } rx_state_t;
+
+static void send_byte(uint8_t b)
+{
+    HAL_UART_Transmit(&huart2, &b, 1, 100);
+}
+
+static void handle_frame(uint8_t cmd, uint8_t *payload, uint8_t len);  /* part 3 */
+
+static void protocol_loop(void)
+{
+    rx_state_t st = ST_WAIT_SOF;
+    uint8_t  buf[2 + 255];        /* LEN, CMD, then payload — the CRC'd region */
+    uint8_t  len = 0, got = 0;
+    uint8_t  crc_bytes[4];
+    uint8_t  b;
+
+    while (1)
+    {
+        /* one byte at a time; timeout matters only mid-frame */
+        uint32_t to = (st == ST_WAIT_SOF) ? HAL_MAX_DELAY : BYTE_TIMEOUT_MS;
+
+        if (HAL_UART_Receive(&huart2, &b, 1, to) != HAL_OK)
+        {
+            st = ST_WAIT_SOF;              /* silence mid-frame: abandon, resync */
+            continue;
+        }
+
+        switch (st)
+        {
+        case ST_WAIT_SOF:
+            if (b == SOF) st = ST_LEN;     /* anything else: silently discarded */
+            break;
+
+        case ST_LEN:
+            len = b;  buf[0] = b;  got = 0;
+            st = ST_CMD;
+            break;
+
+        case ST_CMD:
+            buf[1] = b;
+            st = (len > 0) ? ST_PAYLOAD : ST_CRC;
+            break;
+
+        case ST_PAYLOAD:
+            buf[2 + got] = b;
+            if (++got == len) { got = 0; st = ST_CRC; }
+            break;
+
+        case ST_CRC:
+            crc_bytes[got] = b;
+            if (++got == 4)
+            {
+                /* little-endian on the wire, per protocol.md */
+                uint32_t rx_crc = (uint32_t)crc_bytes[0]
+                                | ((uint32_t)crc_bytes[1] << 8)
+                                | ((uint32_t)crc_bytes[2] << 16)
+                                | ((uint32_t)crc_bytes[3] << 24);
+
+                if (crc_compute(buf, 2 + len) == rx_crc)
+                    handle_frame(buf[1], &buf[2], len);   /* handler sends ACK/NACK */
+                else
+                    send_byte(NACK);
+
+                st = ST_WAIT_SOF;
+            }
+            break;
+        }
+    }
+}
 /* USER CODE BEGIN 0 */
 #define APP_BASE_ADDR  0x08008000UL   /* where the app's vector table lives */
 
@@ -101,10 +184,19 @@ static void jump_to_app(void)
 
 static void update_mode(void)
 {
-    uint8_t byte;
-    const char banner[] = "FlashForge bootloader v0.1 - update mode\r\n";
+	uint8_t byte;
 
+    const char banner[] = "FlashForge bootloader v0.1 - update mode\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)banner, sizeof(banner) - 1, 100);
+
+    uint8_t  tv[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+    uint32_t c = crc_compute(tv, 4);
+    char msg[32];
+    int n = snprintf(msg, sizeof(msg), "CRC=%08lX\r\n", (unsigned long)c);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, n, 100);
+
+    crc_init();
+    protocol_loop();
 
     while (1)
     {
@@ -317,7 +409,62 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+static void handle_frame(uint8_t cmd, uint8_t *payload, uint8_t len)
+{
+    switch (cmd)
+    {
+    case CMD_PING:
+        send_byte(ACK);
+        break;
 
+    case CMD_ERASE:
+        if (len != 1) { send_byte(NACK); break; }
+        flash_unlock();
+        {
+            flash_status_t s = flash_erase_sector(payload[0]);
+            flash_lock();
+            send_byte(s == FLASH_OK ? ACK : NACK);
+        }
+        break;
+
+    case CMD_WRITE:
+        /* payload: 4-byte little-endian address + data (multiple of 4) */
+        if (len < 8 || ((len - 4) % 4) != 0) { send_byte(NACK); break; }
+        {
+            uint32_t addr = (uint32_t)payload[0]
+                          | ((uint32_t)payload[1] << 8)
+                          | ((uint32_t)payload[2] << 16)
+                          | ((uint32_t)payload[3] << 24);
+
+            /* refuse to touch bootloader territory — belt AND braces */
+            if (addr < 0x08008000UL) { send_byte(NACK); break; }
+
+            flash_status_t s = FLASH_OK;
+            flash_unlock();
+            for (uint8_t i = 4; i < len && s == FLASH_OK; i += 4)
+            {
+                uint32_t w = (uint32_t)payload[i]
+                           | ((uint32_t)payload[i+1] << 8)
+                           | ((uint32_t)payload[i+2] << 16)
+                           | ((uint32_t)payload[i+3] << 24);
+                s = flash_write_word(addr + (i - 4), w);
+            }
+            flash_lock();
+            send_byte(s == FLASH_OK ? ACK : NACK);
+        }
+        break;
+
+    case CMD_GO:
+        send_byte(ACK);          /* confirm BEFORE leaving, per protocol.md */
+        HAL_Delay(10);           /* let the byte drain out of the UART */
+        NVIC_SystemReset();      /* clean restart; bootloader re-checks and jumps */
+        break;
+
+    default:
+        send_byte(NACK);
+        break;
+    }
+}
 /* USER CODE END 4 */
 
 /**
