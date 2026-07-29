@@ -23,7 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "flash.h"
 #include "crc.h"
-#include <stdio.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -187,13 +187,6 @@ static void update_mode(void)
     HAL_UART_Transmit(&huart2, (uint8_t *)banner, sizeof(banner) - 1, 100);
 
     crc_init();
-
-    uint8_t  tv[4] = {0xDE, 0xAD, 0xBE, 0xEF};
-    uint32_t c = crc_compute(tv, 4);
-    char msg[32];
-    int n = snprintf(msg, sizeof(msg), "CRC=%08lX\r\n", (unsigned long)c);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, n, 100);
-
     protocol_loop();
 
 
