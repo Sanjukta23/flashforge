@@ -20,6 +20,10 @@ CMD_GO    = 0x05
 REPLY_TIMEOUT_S = 2.0
 MAX_RETRIES     = 3
 
+APP_BODY_ADDR = 0x08008200      # app + vector table
+HDR_ADDR      = 0x08008000      # header block
+CHUNK         = 128             # data bytes per WRITE frame (<= 251)
+ERASE_SECTORS = [2, 3]          # covers 0x08008000 - 0x0800FFFF
 
 def crc32_mpeg2(data: bytes) -> int:
     """CRC-32/MPEG-2, matches the F446 hardware CRC. Pads tail with 0x00."""
@@ -89,6 +93,70 @@ def send_frame(port: serial.Serial, cmd: int, payload: bytes = b"",
 
     return False
 
+def erase_sector(port, sector: int) -> bool:
+    return send_frame(port, CMD_ERASE, bytes([sector]))
+
+
+def write_chunk(port, addr: int, data: bytes) -> bool:
+    """One WRITE frame: 4-byte LE address + word-aligned data."""
+    if len(data) % 4:                       # pad tail to a word with 0xFF (blank flash)
+        data = data + b"\xff" * (4 - len(data) % 4)
+    payload = struct.pack("<I", addr) + data
+    return send_frame(port, CMD_WRITE, payload)
+
+
+def write_region(port, base_addr: int, blob: bytes, label: str) -> bool:
+    """Stream a blob to flash in CHUNK-sized WRITE frames."""
+    for off in range(0, len(blob), CHUNK):
+        chunk = blob[off:off + CHUNK]
+        if not write_chunk(port, base_addr + off, chunk):
+            print(f"  {label}: write failed at offset {off}")
+            return False
+        done = min(off + CHUNK, len(blob))
+        print(f"  {label}: {done}/{len(blob)} bytes", end="\r")
+    print()
+    return True
+
+
+def write_image(port, image_path: str) -> bool:
+    """Flash app_full.bin (header + pad + app) over UART.
+
+    Order is the failsafe: erase, write the APP BODY first, write the
+    HEADER LAST. An interrupted update leaves no valid header, so the
+    bootloader rejects the partial image and stays in update mode.
+    """
+    with open(image_path, "rb") as f:
+        image = f.read()
+
+    header_block = image[:0x200]     # the 512-byte header+pad block
+    app_body     = image[0x200:]     # everything after -> flashes to 0x08008200
+
+    print("ping...")
+    if not send_frame(port, CMD_PING):
+        print("no response - is the board in update mode?")
+        return False
+
+    print(f"erasing sectors {ERASE_SECTORS}...")
+    for s in ERASE_SECTORS:
+        if not erase_sector(port, s):
+            print(f"  erase of sector {s} failed")
+            return False
+
+    print("writing app body...")
+    if not write_region(port, APP_BODY_ADDR, app_body, "app"):
+        return False
+
+    print("writing header (last)...")
+    if not write_region(port, HDR_ADDR, header_block, "hdr"):
+        return False
+
+    print("go...")
+    if not send_frame(port, CMD_GO):
+        print("  GO not acked")
+        return False
+
+    print("done - board should boot the new firmware")
+    return True
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -115,6 +183,11 @@ def main() -> int:
             ok = send_frame(port, CMD_PING)
         elif cmd == "--ping-corrupt":
             ok = send_frame(port, CMD_PING, corrupt=True)
+        elif cmd == "--flash":
+            if len(sys.argv) != 4:
+                print("usage: python flashforge.py COMx --flash <image.bin>")
+                return 1
+            ok = write_image(port, sys.argv[3])
         else:
             print(f"unknown command {cmd}")
             return 1
