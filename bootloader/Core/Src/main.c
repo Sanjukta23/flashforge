@@ -139,7 +139,36 @@ static void protocol_loop(void)
         }
     }
 }
-#define APP_BASE_ADDR  0x08008000UL   /* where the app's vector table lives */
+
+#define HDR_ADDR       0x08008000UL
+#define APP_BASE_ADDR  0x08008200UL   /* where the app's vector table lives */
+#define APP_MAGIC      0x464C4652UL
+
+static int app_is_valid(void)
+{
+    /* the four header words — same pointer-read trick as jump_to_app */
+    uint32_t magic      = *(volatile uint32_t *)(HDR_ADDR + 0U);
+    uint32_t version    = *(volatile uint32_t *)(HDR_ADDR + 4U);
+    uint32_t length     = *(volatile uint32_t *)(HDR_ADDR + 8U);
+    uint32_t stored_crc = *(volatile uint32_t *)(HDR_ADDR + 12U);
+
+    (void)version;   /* read but unused for now — silences the warning */
+
+    /* 1. right kind of parcel? */
+    if (magic != APP_MAGIC)
+        return 0;
+
+    /* 2. is the length sane BEFORE we trust it to bound a loop?
+          max app size = everything from APP_BASE_ADDR to end of flash */
+    if (length == 0U || length > (FLASH_END - APP_BASE_ADDR))
+        return 0;
+
+    /* 3. does the parcel's content actually match the slip?
+          same crc_compute that checks frames — now checking the whole image */
+    uint32_t computed = crc_compute((const uint8_t *)APP_BASE_ADDR, length);
+
+    return (computed == stored_crc);
+}
 
 static void bootloader_signature(void)
 {
@@ -186,7 +215,6 @@ static void update_mode(void)
     const char banner[] = "FlashForge bootloader v0.1 - update mode\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)banner, sizeof(banner) - 1, 100);
 
-    crc_init();
     protocol_loop();
 
 
@@ -225,12 +253,13 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  crc_init();
   bootloader_signature();
-  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
-  {
-      /* button HELD (active-low: pressed = 0) -> stay resident */
+
+  uint8_t button_held = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET);
+
+  if (button_held || !app_is_valid())
       update_mode();
-  }
 
   jump_to_app();
   /* USER CODE END 2 */

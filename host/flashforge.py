@@ -10,6 +10,8 @@ SOF  = 0xA5
 ACK  = 0x79
 NACK = 0x1F
 
+APP_MAGIC = 0x464C4652
+
 CMD_PING  = 0x01
 CMD_ERASE = 0x02
 CMD_WRITE = 0x03
@@ -34,7 +36,27 @@ def crc32_mpeg2(data: bytes) -> int:
                 crc = (crc << 1) & 0xFFFFFFFF
     return crc
 
+def make_image(app_path: str, out_path: str, version: int = 1) -> None:
+    """Read app.bin, prepend a 512-byte header block, write app_full.bin.
 
+    Header (16 bytes, little-endian) then 0xFF padding to 0x200:
+      [MAGIC][VERSION][LENGTH][CRC32]
+    App bytes then follow at offset 0x200 -> flashes to 0x08008200.
+    """
+    with open(app_path, "rb") as f:
+        app = f.read()
+
+    crc = crc32_mpeg2(app)
+    header = struct.pack("<IIII", APP_MAGIC, version, len(app), crc)
+    header_block = header + b"\xff" * (0x200 - len(header))   # pad gap with 'no ink'
+
+    with open(out_path, "wb") as f:
+        f.write(header_block + app)
+
+    print(f"image: {len(app)} app bytes, crc={crc:08X}, "
+          f"total={0x200 + len(app)} bytes -> {out_path}")
+
+    
 def build_frame(cmd: int, payload: bytes = b"") -> bytes:
     """[SOF][LEN][CMD][PAYLOAD][CRC32-LE] - CRC covers LEN+CMD+PAYLOAD."""
     assert len(payload) <= 255
@@ -69,16 +91,26 @@ def send_frame(port: serial.Serial, cmd: int, payload: bytes = b"",
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        print("usage: python flashforge.py COMx --ping | --ping-corrupt")
+    if len(sys.argv) < 2:
+        print("usage:")
+        print("  python flashforge.py --makeimg app.bin app_full.bin")
+        print("  python flashforge.py COMx --ping | --ping-corrupt")
         return 1
 
+    # port-less commands first
+    if sys.argv[1] == "--makeimg":
+        if len(sys.argv) != 4:
+            print("usage: python flashforge.py --makeimg <in.bin> <out.bin>")
+            return 1
+        make_image(sys.argv[2], sys.argv[3])
+        return 0
+
+    # everything below needs the serial port
     com = sys.argv[1]
     cmd = sys.argv[2]
 
     with serial.Serial(com, 115200, timeout=REPLY_TIMEOUT_S) as port:
         time.sleep(0.1)
-
         if cmd == "--ping":
             ok = send_frame(port, CMD_PING)
         elif cmd == "--ping-corrupt":

@@ -67,7 +67,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	SCB->VTOR = 0x08008000UL;   /* vector table lives at app base, not 0x08000000 */
+	SCB->VTOR = 0x08008200UL;   /* vector table lives at app base, not 0x08000000 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
