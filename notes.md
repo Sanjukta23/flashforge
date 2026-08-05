@@ -1,3 +1,4 @@
+
 # Engineering notes
 
 The "why" behind each milestone. One line per decision.
@@ -41,3 +42,16 @@ The "why" behind each milestone. One line per decision.
 - Boot check order: magic -> length sanity -> CRC. Length check stops a garbage length from running the CRC loop off into a busfault.
 - Same `crc_compute` used for frames (M6) and images (M7).
 - Failsafe = ordering: host writes the app first, header last, so an interrupted update leaves no valid header. Bootloader sectors are never touched, so the board can't brick.
+
+## M8 — OTA update over UART
+- `flashforge.py --flash` replaces CubeProgrammer: PING -> ERASE sectors 2-3 -> WRITE app body -> WRITE header last -> GO.
+- Header-last ordering is the failsafe: an interrupted flash leaves no valid header, so the board rejects the partial image.
+- WRITE chunks are 128 data bytes + 4-byte address; final chunk padded to a word with 0xFF.
+- v2 demo app reads the internal temp sensor (ADC1 channel 18) and prints degC every second.
+  - Temp sensor needs a long ADC sample time (480 cycles) — 3 cycles gives jittery/garbage reads.
+
+### M8 debugging story (worth telling)
+- **Symptom:** after an OTA flash, v2 printed one temperature line then froze. Under the debugger the same binary streamed continuously.
+- **Diagnosis:** the difference is the entry path. The debugger enters the app via a hardware reset; the OTA path enters via `jump_to_app()`. Proved the app logic was fine, so the fault was in the handover.
+- **Cause:** `jump_to_app()` did `__disable_irq()` and never re-enabled interrupts, so the app's `HAL_Delay` hung waiting for a SysTick tick that could not fire.
+- **Fix:** in `jump_to_app()`, before the jump — clear all pending NVIC interrupts and call `__enable_irq()`, so the app inherits a reset-equivalent interrupt state. Handover now behaves exactly like a hardware reset.

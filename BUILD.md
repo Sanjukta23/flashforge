@@ -22,33 +22,56 @@
    py flashforge.py --makeimg ..\app\Debug\app.bin app_full.bin
    ```
 
-## Flash (CubeProgrammer -- do NOT enable full chip erase)
+## First-time flashing (CubeProgrammer -- do NOT enable full chip erase)
 
 - `bootloader.bin` -> 0x08000000
 - `app_full.bin`   -> 0x08008000
-- Disconnect, reset. Expect: 5 fast flashes, then a steady blink.
+- Disconnect, reset. Expect: 5 fast flashes, then the app runs.
+
+After the first time, the app is updated over UART with `--flash` (below) — no
+programmer needed.
 
 ## Update mode
 
 Bootloader listens on USART2 (115200 8N1) when the blue button is held at reset
-**or** the app header is invalid.
+**or** the app header is invalid (e.g. after an interrupted update).
 
 ## Host tool (run from `host/`, close PuTTY first)
 
 ```
-py flashforge.py COM3 --ping           check board responds
-py flashforge.py COM3 --ping-corrupt   corrupted frame -> NACK -> retry
+py flashforge.py --makeimg <in.bin> <out.bin>   build a flashable image
+py flashforge.py COM3 --ping                     check board responds
+py flashforge.py COM3 --ping-corrupt             corrupted frame -> NACK -> retry
+py flashforge.py COM3 --flash <image.bin>        flash firmware over UART
 ```
+
+## OTA update workflow
+
+The sequence for every firmware update:
+
+1. Edit + **build** the app in CubeIDE.
+2. `py flashforge.py --makeimg ..\app\Debug\app.bin app_full.bin` (note the new CRC).
+3. Put the board in update mode.
+4. **Close PuTTY**, then `py flashforge.py COM3 --flash app_full.bin`.
+5. Reset, reopen PuTTY to watch.
+
+`--flash` reads `app_full.bin`, which only updates when you run `--makeimg` — so
+always makeimg after building, or you flash stale firmware.
 
 ## Demos
 
 - **Ping/retry:** `--ping` prints `board alive`; `--ping-corrupt` shows a NACK then
   a successful retry.
-- **Failsafe:** flash a valid image, corrupt one byte at ~0x08009000 in the memory
-  viewer, reset -> board stays in update mode. Re-flash `app_full.bin` -> boots again.
+- **OTA temp sensor:** flash the v2 image, reset, watch temperatures stream in PuTTY;
+  pinch the chip and the reading rises.
+- **Failsafe:** corrupt one byte of a flashed app in the memory viewer, reset ->
+  board stays in update mode. Re-flash -> boots again.
 
 ## Common issues
 
-- CubeIDE "Failed to start GDB server" -> CubeProgrammer/PuTTY is holding the ST-Link.
+- CubeIDE "Failed to start GDB server" / PuTTY silent -> CubeProgrammer or PuTTY is
+  holding the ST-Link. Disconnect it, or unplug/replug USB.
+- `--flash` times out -> board isn't in update mode when the command runs.
+- `Access is denied` on COMx -> PuTTY still has the port open; close it.
 - Valid image rejected -> host and bootloader magic values differ, or CRC clock off.
 - `python` not found on Windows -> use `py`.
