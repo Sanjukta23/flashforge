@@ -184,28 +184,28 @@ static void bootloader_signature(void)
 
 static void jump_to_app(void)
 {
-    /* 1. Read the app's two "notes" BEFORE we tear anything down.
-          (uint32_t *)APP_BASE_ADDR      = "treat this number as an address of a 32-bit word"
-          *(...)                          = "the value stored there"                    */
-    uint32_t app_msp   = *(uint32_t *)(APP_BASE_ADDR);        /* note 1: initial stack  */
-    uint32_t app_reset = *(uint32_t *)(APP_BASE_ADDR + 4U);   /* note 2: reset handler  */
+    uint32_t app_msp   = *(uint32_t *)(APP_BASE_ADDR);
+    uint32_t app_reset = *(uint32_t *)(APP_BASE_ADDR + 4U);
 
-    /* 2. Ignore all alarms from here on */
     __disable_irq();
 
-    /* 3. Switch the alarm clock off completely (HAL_Init started it) */
     SysTick->CTRL = 0;
     SysTick->LOAD = 0;
     SysTick->VAL  = 0;
 
-    /* 4. Undo the bootloader's peripheral setup */
     HAL_DeInit();
 
-    /* 5. Hand over the stack */
+    /* clear any pending interrupts so the app starts clean */
+    for (int i = 0; i < 8; i++)
+    {
+        NVIC->ICER[i] = 0xFFFFFFFF;   /* disable all interrupts   */
+        NVIC->ICPR[i] = 0xFFFFFFFF;   /* clear all pending         */
+    }
+
     __set_MSP(app_msp);
 
-    /* 6. Go. Cast note 2 into "a function taking nothing, returning nothing" and call it.
-          This call never returns. */
+    __enable_irq();                   /* app inherits IRQs enabled, like after reset */
+
     void (*app_entry)(void) = (void (*)(void))app_reset;
     app_entry();
 }
