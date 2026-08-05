@@ -1,4 +1,3 @@
-
 # Engineering notes
 
 The "why" behind each milestone. One line per decision.
@@ -55,3 +54,24 @@ The "why" behind each milestone. One line per decision.
 - **Diagnosis:** the difference is the entry path. The debugger enters the app via a hardware reset; the OTA path enters via `jump_to_app()`. Proved the app logic was fine, so the fault was in the handover.
 - **Cause:** `jump_to_app()` did `__disable_irq()` and never re-enabled interrupts, so the app's `HAL_Delay` hung waiting for a SysTick tick that could not fire.
 - **Fix:** in `jump_to_app()`, before the jump — clear all pending NVIC interrupts and call `__enable_irq()`, so the app inherits a reset-equivalent interrupt state. Handover now behaves exactly like a hardware reset.
+
+## M9 — Interrupted-update failsafe (failure analysis)
+
+Demonstrated: started an OTA flash, physically unplugged USB mid-transfer, replugged,
+reset. The board detected the incomplete image and stayed in update mode instead of
+booting it; a second flash recovered it fully.
+
+Why every interrupt point is safe:
+- **During erase:** app region partly erased, header still 0xFF -> magic check fails -> update mode.
+- **During app-body write:** header still 0xFF (written last) -> magic check fails -> update mode.
+- **During header write:** partial header fails magic or CRC -> update mode.
+- **Always:** the bootloader lives in sectors 0-1, which the host never writes and the
+  WRITE handler rejects (addr < 0x08008000). No interrupt at any point can touch it.
+
+So the board can always be re-flashed -> it cannot be bricked. This is an architectural
+property (memory map + header-last ordering + boot-time CRC), not luck.
+
+Why header-last specifically: writing the header first could briefly leave a valid-looking
+header in front of an incomplete app. The image CRC would still catch it, but header-last
+means the cheapest check (magic) already rejects a partial image, and there is never a
+window where a valid header fronts bad data.
